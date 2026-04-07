@@ -26,22 +26,23 @@ ocr = PaddleOCR(
     enable_mkldnn=False
 )
 def extrair_texto(imagem):
-    resultado = ocr.predict(imagem)
+    resultado = ocr.ocr(imagem, cls=False)
+    if not resultado or not resultado[0]:
+        return ""
 
-    for pagina in resultado:
-        textos = pagina["rec_texts"]
-        boxes = pagina["rec_boxes"]
+    elementos = []
+    for item in resultado[0]:
+        box = item[0]
+        texto = item[1][0]
 
-        elementos = []
-        for texto, box in zip(textos, boxes):
-            x1, y1, x2, y2 = box
-            elementos.append({"texto": texto, "x": x1, "y": y1})
+        # Box com 4 pontos: usa menor x/y para ancorar e ordenar leitura.
+        xs = [p[0] for p in box]
+        ys = [p[1] for p in box]
+        elementos.append({"texto": texto, "x": min(xs), "y": min(ys)})
 
-        elementos.sort(key=lambda e: e["y"])
-
-        linhas = agrupar_por_linha(elementos)
-
-        return "\n".join(linhas)
+    elementos.sort(key=lambda e: e["y"])
+    linhas = agrupar_por_linha(elementos)
+    return "\n".join(linhas)
     
 def agrupar_por_linha(elementos, tolerancia=15):
     linhas = []
@@ -139,7 +140,7 @@ def processar_documento(caminho_imagem):
     return dados
 
 
-dados = processar_documento("aluno1.jpg")
+dados = processar_documento("estudante3.jpg")
 
 print("\n---------------")
 print(dados)
