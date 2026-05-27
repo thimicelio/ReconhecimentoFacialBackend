@@ -1,270 +1,157 @@
-import os
 import cv2
-import pickle
-import shutil
+import numpy as np
 
-DATASET_DIR = "dataset"
-TRAINER_FILE = "trainer.yml"
-LABELS_FILE = "labels.pkl"
+IMAGEM_PESSOA = "treino6.jpeg"
+IMAGEM_DOCUMENTO = "teste2.jpeg"
 
-# Haar Cascade que já vem com o OpenCV
-CASCADE_PATH = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+LIMIAR = 0.70
 
 
-def garantir_pastas():
-    os.makedirs(DATASET_DIR, exist_ok=True)
+def carregar_imagem(caminho):
+    imagem = cv2.imread(caminho)
+
+    if imagem is None:
+        print(f"Erro ao carregar: {caminho}")
+        return None
+
+    return imagem
 
 
-def detectar_rosto(gray, face_cascade):
-    faces = face_cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.2,
-        minNeighbors=5,
-        minSize=(100, 100)
+def obter_rosto_unico(imagem, nome):
+    classificador = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
     )
-    return faces
+    variacoes = [
+        ("0", imagem),
+        ("90_cw", cv2.rotate(imagem, cv2.ROTATE_90_CLOCKWISE)),
+        ("180", cv2.rotate(imagem, cv2.ROTATE_180)),
+        ("90_ccw", cv2.rotate(imagem, cv2.ROTATE_90_COUNTERCLOCKWISE)),
+    ]
+
+    melhor_rosto = None
+    melhor_area = 0
+    melhor_rotacao = "0"
+
+    for rotacao, imagem_rotacionada in variacoes:
+        imagem_cinza = cv2.cvtColor(imagem_rotacionada, cv2.COLOR_BGR2GRAY)
+        rostos = classificador.detectMultiScale(
+            imagem_cinza,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(60, 60)
+        )
+
+        for x, y, w, h in rostos:
+            area = w * h
+            if area > melhor_area:
+                melhor_area = area
+                melhor_rotacao = rotacao
+                melhor_rosto = imagem_rotacionada[y:y + h, x:x + w]
+
+    if melhor_rosto is None:
+        print(f"Nenhum rosto encontrado em {nome}")
+        return None
+
+    print(f"Rosto selecionado em {nome}: rotação {melhor_rotacao}")
+    return melhor_rosto
 
 
-def cadastrar_pessoa():
-    garantir_pastas()
+def processar_rosto(rosto):
+    rosto_cinza = cv2.cvtColor(rosto, cv2.COLOR_BGR2GRAY)
+    rosto_cinza = cv2.resize(rosto_cinza, (200, 200))
+    rosto_cinza = cv2.equalizeHist(rosto_cinza)
+    return rosto_cinza
 
-    nome = input("Nome da pessoa para cadastrar: ").strip()
-    if not nome:
-        print("Nome inválido.")
+
+def obter_descritor_rosto(rosto_processado, nome):
+    orb = cv2.ORB_create(nfeatures=500)
+    _, descritor = orb.detectAndCompute(rosto_processado, None)
+
+    if descritor is None or len(descritor) < 10:
+        print(f"Não foi possível extrair características suficientes em {nome}")
+        return None
+
+    return descritor
+
+
+def calcular_similaridade(descritor_a, descritor_b):
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+    correspondencias = bf.knnMatch(descritor_a, descritor_b, k=2)
+
+    boas = []
+    for dupla in correspondencias:
+        if len(dupla) < 2:
+            continue
+
+        primeira, segunda = dupla
+        if primeira.distance < 0.75 * segunda.distance:
+            boas.append(primeira)
+
+    base = max(len(correspondencias), 1)
+    return len(boas) / base
+
+
+def extrair_descritor_hog(imagem):
+    grad_x = cv2.Sobel(imagem, cv2.CV_32F, 1, 0, ksize=1)
+    grad_y = cv2.Sobel(imagem, cv2.CV_32F, 0, 1, ksize=1)
+    magnitude, angulo = cv2.cartToPolar(grad_x, grad_y, angleInDegrees=False)
+
+    bins = (16 * angulo / (2 * np.pi)).astype(np.int32) % 16
+    descritores = []
+    tamanho_celula = 20
+
+    for y in range(0, imagem.shape[0], tamanho_celula):
+        for x in range(0, imagem.shape[1], tamanho_celula):
+            bloco_bins = bins[y:y + tamanho_celula, x:x + tamanho_celula].ravel()
+            bloco_mag = magnitude[y:y + tamanho_celula, x:x + tamanho_celula].ravel()
+            hist = np.bincount(bloco_bins, weights=bloco_mag, minlength=16).astype(np.float32)
+            norma = np.linalg.norm(hist)
+            if norma > 0:
+                hist /= norma
+            descritores.append(hist)
+
+    return np.concatenate(descritores)
+
+
+def calcular_similaridade_hog(imagem_a, imagem_b):
+    desc_a = extrair_descritor_hog(imagem_a)
+    desc_b = extrair_descritor_hog(imagem_b)
+
+    norma = np.linalg.norm(desc_a) * np.linalg.norm(desc_b)
+    if norma == 0:
+        return 0.0
+
+    return float(np.dot(desc_a, desc_b) / norma)
+
+
+def validar():
+    imagem_pessoa = carregar_imagem(IMAGEM_PESSOA)
+    imagem_documento = carregar_imagem(IMAGEM_DOCUMENTO)
+
+    if imagem_pessoa is None or imagem_documento is None:
         return
 
-    pasta_pessoa = os.path.join(DATASET_DIR, nome)
+    rosto_pessoa = obter_rosto_unico(imagem_pessoa, "foto da pessoa")
+    rosto_documento = obter_rosto_unico(imagem_documento, "documento")
 
-    if os.path.exists(pasta_pessoa):
-        resp = input("Essa pessoa já existe. Deseja apagar e cadastrar de novo? (s/n): ").strip().lower()
-        if resp != "s":
-            print("Cadastro cancelado.")
-            return
-        shutil.rmtree(pasta_pessoa)
-
-    os.makedirs(pasta_pessoa, exist_ok=True)
-
-    face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
-    cap = cv2.VideoCapture(0)
-
-    if not cap.isOpened():
-        print("Não foi possível abrir a câmera.")
+    if rosto_pessoa is None or rosto_documento is None:
         return
 
-    print("\nCadastro iniciado.")
-    print("Olhe para a câmera. Serão salvas 30 fotos do rosto.")
-    print("Pressione Q para cancelar.\n")
+    rosto_pessoa_processado = processar_rosto(rosto_pessoa)
+    rosto_documento_processado = processar_rosto(rosto_documento)
 
-    count = 0
-    total_fotos = 30
+    similaridade_hog = calcular_similaridade_hog(rosto_pessoa_processado, rosto_documento_processado)
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Erro ao capturar imagem.")
-            break
+    similaridade = similaridade_hog
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = detectar_rosto(gray, face_cascade)
+    print(f"Similaridade HOG: {similaridade_hog:.4f}")
+    print(f"Similaridade final: {similaridade:.4f}")
 
-        for (x, y, w, h) in faces:
-            rosto = gray[y:y+h, x:x+w]
-            rosto = cv2.resize(rosto, (200, 200))
-
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-
-            # salva uma imagem por frame enquanto houver só um rosto razoável
-            if len(faces) == 1 and count < total_fotos:
-                arquivo = os.path.join(pasta_pessoa, f"{count+1}.jpg")
-                cv2.imwrite(arquivo, rosto)
-                count += 1
-                cv2.putText(frame, f"Capturadas: {count}/{total_fotos}",
-                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-                cv2.imshow("Cadastro", frame)
-                cv2.waitKey(150)
-
-        cv2.putText(frame, f"Capturadas: {count}/{total_fotos}",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-        cv2.putText(frame, "Pressione Q para cancelar",
-                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
-
-        cv2.imshow("Cadastro", frame)
-
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q"):
-            print("Cadastro cancelado.")
-            break
-
-        if count >= total_fotos:
-            print(f"Cadastro de {nome} concluído com {total_fotos} imagens.")
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-
-
-def treinar_modelo():
-    garantir_pastas()
-
-    if not hasattr(cv2, "face"):
-        print("Seu OpenCV não tem o módulo cv2.face.")
-        print("Instale com: pip install opencv-contrib-python")
-        return False
-
-    face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
-    recognizer = cv2.face.LBPHFaceRecognizer_create()
-
-    imagens = []
-    labels = []
-    label_map = {}
-    current_id = 0
-
-    pessoas = [p for p in os.listdir(DATASET_DIR) if os.path.isdir(os.path.join(DATASET_DIR, p))]
-
-    if not pessoas:
-        print("Nenhuma pessoa cadastrada para treinar.")
-        return False
-
-    for pessoa in pessoas:
-        pasta_pessoa = os.path.join(DATASET_DIR, pessoa)
-
-        if pessoa not in label_map:
-            label_map[pessoa] = current_id
-            current_id += 1
-
-        label_id = label_map[pessoa]
-
-        for arquivo in os.listdir(pasta_pessoa):
-            caminho = os.path.join(pasta_pessoa, arquivo)
-
-            img = cv2.imread(caminho, cv2.IMREAD_GRAYSCALE)
-            if img is None:
-                continue
-
-            faces = detectar_rosto(img, face_cascade)
-
-            if len(faces) == 0:
-                # se a imagem já for só o rosto recortado
-                rosto = cv2.resize(img, (200, 200))
-                imagens.append(rosto)
-                labels.append(label_id)
-            else:
-                for (x, y, w, h) in faces:
-                    rosto = img[y:y+h, x:x+w]
-                    rosto = cv2.resize(rosto, (200, 200))
-                    imagens.append(rosto)
-                    labels.append(label_id)
-
-    if not imagens:
-        print("Nenhuma imagem válida encontrada para treino.")
-        return False
-
-    recognizer.train(imagens, cv2.UMat if False else __import__("numpy").array(labels))
-    recognizer.save(TRAINER_FILE)
-
-    with open(LABELS_FILE, "wb") as f:
-        pickle.dump(label_map, f)
-
-    print("Treinamento concluído com sucesso.")
-    return True
-
-
-def tentar_entrar():
-    if not os.path.exists(TRAINER_FILE) or not os.path.exists(LABELS_FILE):
-        print("Modelo ainda não treinado.")
-        print("Treinando agora...")
-        ok = treinar_modelo()
-        if not ok:
-            return
-
-    recognizer = cv2.face.LBPHFaceRecognizer_create()
-    recognizer.read(TRAINER_FILE)
-
-    with open(LABELS_FILE, "rb") as f:
-        label_map = pickle.load(f)
-
-    id_to_name = {v: k for k, v in label_map.items()}
-
-    face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
-    cap = cv2.VideoCapture(0)
-
-    if not cap.isOpened():
-        print("Não foi possível abrir a câmera.")
-        return
-
-    print("\nModo entrada.")
-    print("Mostre o rosto para a câmera.")
-    print("Pressione Q para sair.\n")
-
-    autorizado = False
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Erro ao capturar imagem.")
-            break
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = detectar_rosto(gray, face_cascade)
-
-        for (x, y, w, h) in faces:
-            rosto = gray[y:y+h, x:x+w]
-            rosto = cv2.resize(rosto, (200, 200))
-
-            label_id, confidence = recognizer.predict(rosto)
-
-            # No LBPH, menor confidence costuma ser melhor
-            if confidence < 60:
-                nome = id_to_name.get(label_id, "Desconhecido")
-                texto = f"Autorizado: {nome} ({confidence:.1f})"
-                autorizado = True
-            else:
-                texto = f"Nao autorizado ({confidence:.1f})"
-
-            cor = (0, 255, 0) if autorizado else (0, 0, 255)
-
-            cv2.rectangle(frame, (x, y), (x+w, y+h), cor, 2)
-            cv2.putText(frame, texto, (x, y-10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, cor, 2)
-
-        cv2.imshow("Entrada", frame)
-
-        if autorizado:
-            print("✅ Acesso autorizado.")
-            cv2.waitKey(1500)
-            break
-
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q"):
-            print("Encerrado.")
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-
-
-def menu():
-    while True:
-        print("\n=== SISTEMA DE ACESSO FACIAL ===")
-        print("1 - Cadastrar pessoa")
-        print("2 - Treinar modelo")
-        print("3 - Tentar entrar")
-        print("4 - Sair")
-
-        opcao = input("Escolha uma opção: ").strip()
-
-        if opcao == "1":
-            cadastrar_pessoa()
-        elif opcao == "2":
-            treinar_modelo()
-        elif opcao == "3":
-            tentar_entrar()
-        elif opcao == "4":
-            print("Saindo...")
-            break
-        else:
-            print("Opção inválida.")
+    if similaridade >= LIMIAR:
+        print("✅ MESMA PESSOA")
+    else:
+        print("❌ PESSOA DIFERENTE")
 
 
 if __name__ == "__main__":
-    menu()
+    validar()
