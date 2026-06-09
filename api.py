@@ -7,8 +7,7 @@ from werkzeug.utils import secure_filename
 from document_service import processar_documento
 from face_service import FaceComparisonError, comparar_faces
 
-
-app = Flask(__name__)
+app = Flask("VexaAPI")
 
 
 @app.after_request
@@ -76,7 +75,9 @@ def validar_documento():
     except (ValueError, FaceComparisonError) as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
-        return jsonify({"error": "Erro interno ao processar a requisicao.", "detail": str(exc)}), 500
+        return jsonify(
+            {"error": "Erro interno ao processar a requisicao.", "detail": str(exc)}
+        ), 500
 
 
 if __name__ == "__main__":

@@ -1,15 +1,16 @@
-# Facial Recognition Backend
+# VexaAPI
 
-This project is an independent API developed for an academic assignment at
+VexaAPI is an independent API developed for an academic assignment at
 UEMG, during the 7th semester of the Computer Engineering course.
 
-The API receives a person's photo, a document photo, and a similarity threshold.
-It compares the face in both images and also extracts document information using
-OCR. The result is returned as JSON.
+The name VexaAPI comes from "Verify & Extract": the API receives a person's
+photo, a document photo, and a similarity threshold. It compares the face in both
+images and also extracts document information using OCR. The result is returned
+as JSON.
 
 ## Technologies
 
-This project uses Python 3.11.9.
+VexaAPI uses Python 3.11.9.
 
 Dependencies listed in `requirements.txt`:
 
@@ -55,7 +56,7 @@ Install the dependencies:
 python -m pip install -r requirements.txt
 ```
 
-Start the API:
+Start VexaAPI:
 
 ```powershell
 python api.py
