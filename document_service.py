@@ -1,4 +1,9 @@
-from field_extractors import (
+import os
+
+import cv2
+from paddleocr import PaddleOCR
+
+from text_processing import (
     eh_label_nome,
     extrair_cpf,
     extrair_datas_por_contexto,
@@ -7,8 +12,72 @@ from field_extractors import (
     limpar_nome_candidato,
     parece_nome_pessoa,
 )
-from image_utils import preprocessar_imagem
-from ocr_reader import extrair_texto
+
+
+def configurar_ambiente_paddle():
+    os.environ["FLAGS_use_mkldnn"] = "0"
+    os.environ["FLAGS_use_pir_api"] = "0"
+    os.environ["FLAGS_enable_pir_in_executor"] = "0"
+    os.environ["FLAGS_allocator_strategy"] = "auto_growth"
+
+
+configurar_ambiente_paddle()
+
+ocr = PaddleOCR(
+    lang="pt",
+    enable_mkldnn=False,
+)
+
+
+def preprocessar_imagem(caminho):
+    img = cv2.imread(caminho)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img = cv2.equalizeHist(img)
+    img = cv2.GaussianBlur(img, (3, 3), 0)
+    return img
+
+
+def agrupar_por_linha(elementos, tolerancia=15):
+    linhas = []
+
+    for el in elementos:
+        encontrou = False
+
+        for linha in linhas:
+            if abs(linha[0]["y"] - el["y"]) < tolerancia:
+                linha.append(el)
+                encontrou = True
+                break
+
+        if not encontrou:
+            linhas.append([el])
+
+    linhas_ordenadas = []
+    for linha in linhas:
+        linha.sort(key=lambda e: e["x"])
+        texto_linha = " ".join([e["texto"] for e in linha])
+        linhas_ordenadas.append(texto_linha)
+
+    return linhas_ordenadas
+
+
+def extrair_texto(imagem):
+    resultado = ocr.ocr(imagem, cls=False)
+    if not resultado or not resultado[0]:
+        return ""
+
+    elementos = []
+    for item in resultado[0]:
+        box = item[0]
+        texto = item[1][0]
+
+        xs = [p[0] for p in box]
+        ys = [p[1] for p in box]
+        elementos.append({"texto": texto, "x": min(xs), "y": min(ys)})
+
+    elementos.sort(key=lambda e: e["y"])
+    linhas = agrupar_por_linha(elementos)
+    return "\n".join(linhas)
 
 
 def extrair_dados(texto):
