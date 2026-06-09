@@ -60,7 +60,5 @@ def processar_documento(caminho_imagem):
     img_processada = preprocessar_imagem(caminho_imagem)
     texto = extrair_texto(img_processada)
 
-    print(texto)
-
     dados = extrair_dados(texto)
     return dados
